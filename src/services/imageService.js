@@ -21,7 +21,8 @@ async function getSignedImageUrl(key) {
 export async function getImages(page) {
   const command = new ListObjectsV2Command({
     Bucket: bucketName,
-    MaxKeys: 1000
+    MaxKeys: 1000,
+    Prefix: 'images'
   });
   
   const { Contents = [] } = await s3Client.send(command);
