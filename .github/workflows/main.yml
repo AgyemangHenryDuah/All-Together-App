@@ -1,0 +1,34 @@
+name: Deploy to Amazon ECR
+on:
+  push:
+    branches: [ "main" ]
+env:
+  AWS_REGION: us-east-1
+  ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
+  ECR_REPOSITORY: all-together-repo
+  IMAGE_TAG: henryagyemang_app
+jobs:
+  deploy:
+    name: Deploy to ECR
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    - name: Configure AWS credentials
+      uses: aws-actions/configure-aws-credentials@v2
+      with:
+        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+        aws-region: us-east-1
+    - name: Login to Amazon Public ECR
+      run: |
+        aws ecr-public get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin public.ecr.aws
+    - name: Build, tag, and push image to Amazon ECR
+      id: build-image
+      
+      run: |
+        # Build a docker container and push it to ECR
+        docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+        docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+        echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
