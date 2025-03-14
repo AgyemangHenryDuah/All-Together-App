@@ -9,6 +9,7 @@ import {
 
 const router = express.Router();
 
+
 router.get('/', listImages);
 router.post('/upload', upload.single('image'), handleUpload);
 router.post('/delete/:id', handleDelete);

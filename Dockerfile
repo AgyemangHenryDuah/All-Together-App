@@ -6,6 +6,7 @@ WORKDIR /app
 
 RUN chown -R appuser:appgroup /app
 
+
 USER appuser
 
 COPY --chown=appuser:appgroup package*.json ./

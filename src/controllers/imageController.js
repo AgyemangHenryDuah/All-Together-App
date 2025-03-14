@@ -5,6 +5,7 @@ export const listImages = async (req, res) => {
     const page = parseInt(req.query.page) || 1;
     const { images, totalPages, totalImages } = await getImages(page);
     
+    
     res.render('index', {
       images,
       currentPage: page,

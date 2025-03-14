@@ -9,6 +9,7 @@ import { s3Client, bucketName } from '../config/s3.js';
 
 const ITEMS_PER_PAGE = 10;
 
+
 async function getSignedImageUrl(key) {
   const command = new GetObjectCommand({
     Bucket: bucketName,
