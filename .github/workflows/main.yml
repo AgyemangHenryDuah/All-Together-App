@@ -57,6 +57,33 @@ jobs:
         TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition.taskDefinitionArn' --output text)
         echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
 
+        - name: Create deployment.json file
+      run: |
+        cat <<EOF > deployment.json
+        {
+          "revisionType": "AppSpecContent",
+          "appSpecContent": {
+            "content": "{
+              \"version\": 0.0,
+              \"Resources\": [
+                {
+                  \"TargetService\": {
+                    \"Type\": \"AWS::ECS::Service\",
+                    \"Properties\": {
+                      \"TaskDefinition\": \"${{ env.TASK_DEF_ARN }}\",
+                      \"LoadBalancerInfo\": {
+                        \"ContainerName\": \"MyAppContainer\",
+                        \"ContainerPort\": 3000
+                      }
+                    }
+                  }
+                }
+              ]
+            }"
+          }
+        }
+        EOF
+
     - name: Create a new deployment with AWS CodeDeploy
       run: |
         aws deploy create-deployment \
