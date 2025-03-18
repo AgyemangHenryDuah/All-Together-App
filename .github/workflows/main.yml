@@ -1,98 +1,91 @@
-name: Deploy to Amazon ECS with Blue-Green Deployment
-
+name: Deploy to Amazon ECR and ECS with Blue/Green
 on:
   push:
     branches: [ "main" ]
-
 env:
   AWS_REGION: us-east-1
   ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
   ECR_REPOSITORY: all-together-repo
   IMAGE_TAG: henryagyemang_app
-  ECS_CLUSTER: MyAppCluster
   ECS_SERVICE: MyAppService
-  TASK_DEFINITION_FILE: ecs-task-definition.json
-  CODEDEPLOY_APP_NAME: CodeDeployApplication
-  CODEDEPLOY_DEPLOYMENT_GROUP: CodeDeploymentGroup
-
+  ECS_CLUSTER: MyAppCluster
+  TASK_FAMILY: MyAppTask
+  CONTAINER_NAME: MyAppContainer
+  CONTAINER_PORT: 3000
 jobs:
   deploy:
-    name: Deploy to ECS with Blue-Green Deployment
+    name: Deploy to ECR and ECS
     runs-on: ubuntu-latest
     environment: production
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
-
+      
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
         aws-region: ${{ env.AWS_REGION }}
-
+        
     - name: Login to Amazon Public ECR
       run: |
         aws ecr-public get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin public.ecr.aws
-
+        
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
       run: |
+        # Build a docker container and push it to ECR
         docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
-
-    - name: Register new ECS task definition
+        
+    - name: Check AWS resources exist
       run: |
-        TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition' --output json)
-        NEW_TASK_DEF=$(echo "$TASK_DEFINITION_JSON" | jq --arg IMAGE "$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" '
-          del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy, .registeredBy)
-          | .containerDefinitions[0].image = $IMAGE')
-        echo "$NEW_TASK_DEF" > $TASK_DEFINITION_FILE
-        aws ecs register-task-definition --cli-input-json file://$TASK_DEFINITION_FILE
-
-    - name: Get latest task definition ARN
-      id: task-def-arn
+        echo "Checking ECS cluster..."
+        aws ecs describe-clusters --clusters $ECS_CLUSTER
+        
+        echo "Checking ECS service..."
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE
+        
+        echo "Checking CodeDeploy application..."
+        aws deploy get-application --application-name $CODEDEPLOY_APPLICATION || echo "CodeDeploy application not found: $CODEDEPLOY_APPLICATION"
+        
+        echo "Checking CodeDeploy deployment group..."
+        aws deploy get-deployment-group --application-name $CODEDEPLOY_APPLICATION --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP || echo "Deployment group not found: $CODEDEPLOY_DEPLOYMENT_GROUP"
+    
+    - name: Get current task definition
+      id: task-def
       run: |
-        TASK_DEF_ARN=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition.taskDefinitionArn' --output text)
-        echo "TASK_DEF_ARN=$TASK_DEF_ARN" >> $GITHUB_ENV
-
-        - name: Create deployment.json file
+        # Use the latest active revision
+        TASK_DEF_ARN=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
+        
+        if [ -z "$TASK_DEF_ARN" ]; then
+          echo "No task definition found for service $ECS_SERVICE"
+          exit 1
+        fi
+        
+        echo "Using task definition: $TASK_DEF_ARN"
+        
+        # Get the task definition details
+        aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --query 'taskDefinition' --output json > task-definition.json
+        
+        echo "task_definition_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+    
+    - name: Render new task definition
+      id: render-task-def
       run: |
-        cat <<EOF > deployment.json
-        {
-          "revisionType": "AppSpecContent",
-          "appSpecContent": {
-            "content": "{
-              \"version\": 0.0,
-              \"Resources\": [
-                {
-                  \"TargetService\": {
-                    \"Type\": \"AWS::ECS::Service\",
-                    \"Properties\": {
-                      \"TaskDefinition\": \"${{ env.TASK_DEF_ARN }}\",
-                      \"LoadBalancerInfo\": {
-                        \"ContainerName\": \"MyAppContainer\",
-                        \"ContainerPort\": 3000
-                      }
-                    }
-                  }
-                }
-              ]
-            }"
-          }
-        }
-        EOF
-
-    - name: Create a new deployment with AWS CodeDeploy
-      run: |
-        aws deploy create-deployment \
-          --application-name $CODEDEPLOY_APP_NAME \
-          --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP \
-          --revision file://$GITHUB_WORKSPACE/deployment.json \
-          --deployment-config-name CodeDeployDefault.ECSAllAtOnce
-
-    - name: Wait for deployment to finish
-      run: |
-        DEPLOYMENT_ID=$(aws deploy list-deployments --application-name $CODEDEPLOY_APP_NAME --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP --query 'deployments[0]' --output text)
-        aws deploy wait deployment-successful --deployment-id $DEPLOYMENT_ID
+        # Print the task definition for debugging
+        echo "Original task definition:"
+        cat task-definition.json
+        
+        # Create a new task definition with updated image
+        IMAGE_NAME="${{ steps.build-image.outputs.image }}"
+        echo "Using image: $IMAGE_NAME"
+        
+        jq ".containerDefinitions[0].image = \"$IMAGE_NAME\"" task-definition.json > updated-task-definition.json
+        
+        echo "Updated task definition:"
+        cat updated-task-definition.json
+        
+        # Remove
