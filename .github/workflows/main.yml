@@ -72,8 +72,15 @@ jobs:
                   ContainerPort: 3000
         EOL
 
-    - name: Create deployment config JSON
+    - name: Create deployment config file
       run: |
+        # Ensure correct base64 encoding without newline issues
+        BASE64_CONTENT=$(base64 -w 0 appspec.yaml)
+        
+        # Correct SHA-256 checksum calculation
+        SHA256_HASH=$(echo -n "$BASE64_CONTENT" | base64 --decode | sha256sum | cut -d' ' -f1)
+
+        # Create deployment config JSON
         cat > deployment-config.json << EOL
         {
           "applicationName": "${{ env.CODEDEPLOY_APPLICATION }}",
@@ -81,8 +88,8 @@ jobs:
           "revision": {
             "revisionType": "AppSpecContent",
             "appSpecContent": {
-              "content": "$(base64 -w 0 < appspec.yaml)",
-              "sha256": "$(sha256sum < appspec.yaml | cut -d' ' -f1)"
+              "content": "$BASE64_CONTENT",
+              "sha256": "$SHA256_HASH"
             }
           }
         }
