@@ -42,7 +42,7 @@ jobs:
         docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
 
-        - name: Register new ECS task definition
+    - name: Register new ECS task definition
       run: |
         TASK_DEFINITION_JSON=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition' --output json)
         NEW_TASK_DEF=$(echo "$TASK_DEFINITION_JSON" | jq --arg IMAGE "$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" '
@@ -50,7 +50,6 @@ jobs:
           | .containerDefinitions[0].image = $IMAGE')
         echo "$NEW_TASK_DEF" > $TASK_DEFINITION_FILE
         aws ecs register-task-definition --cli-input-json file://$TASK_DEFINITION_FILE
-
 
     - name: Get latest task definition ARN
       id: task-def-arn
