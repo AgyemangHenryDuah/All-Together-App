@@ -13,7 +13,7 @@ env:
   ECS_CLUSTER: MyAppCluster
   ECS_SERVICE: MyAppService
   ECS_TASK_FAMILY: MyAppTask
-  CODEDEPLOY_APPLICATION: CodeDeployApplication
+  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-y8VXqHADneJS
   CODEDEPLOY_DEPLOYMENT_GROUP: CodeDeploymentGroup
 
 jobs:
