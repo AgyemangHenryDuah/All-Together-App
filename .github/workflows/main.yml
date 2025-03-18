@@ -1,4 +1,4 @@
-name: Deploy to Amazon ECR
+name: Deploy to Amazon ECR and ECS with Blue/Green
 on:
   push:
     branches: [ "main" ]
@@ -7,28 +7,121 @@ env:
   ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
   ECR_REPOSITORY: all-together-repo
   IMAGE_TAG: henryagyemang_app
+  ECS_SERVICE: MyAppService
+  ECS_CLUSTER: MyAppCluster
+  CODEDEPLOY_APPLICATION: CodeDeployApplication
+  CODEDEPLOY_DEPLOYMENT_GROUP: CodeDeploymentGroup
 jobs:
   deploy:
-    name: Deploy to ECR
+    name: Deploy to ECR and ECS
     runs-on: ubuntu-latest
     environment: production
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
+        aws-region: ${{ env.AWS_REGION }}
+        
     - name: Login to Amazon Public ECR
       run: |
         aws ecr-public get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin public.ecr.aws
+        
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
-      
       run: |
         # Build a docker container and push it to ECR
         docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+    
+    - name: Get current task definition
+      id: task-def
+      run: |
+        TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition' --output json)
+        echo "$TASK_DEFINITION" > task-definition.json
+        echo "task_definition_arn=$(echo $TASK_DEFINITION | jq -r '.taskDefinitionArn')" >> $GITHUB_OUTPUT
+    
+    - name: Render new task definition
+      id: render-task-def
+      run: |
+        # Update the image in the task definition
+        CONTAINER_DEFINITIONS=$(cat task-definition.json | jq -r '.containerDefinitions')
+        UPDATED_CONTAINER_DEFINITIONS=$(echo $CONTAINER_DEFINITIONS | jq '.[0].image = "${{ steps.build-image.outputs.image }}"')
+        jq --argjson cd "$UPDATED_CONTAINER_DEFINITIONS" '.containerDefinitions = $cd' task-definition.json > updated-task-definition.json
+        
+        # Register the new task definition and capture the ARN
+        NEW_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
+          --cli-input-json file://updated-task-definition.json \
+          --query 'taskDefinition.taskDefinitionArn' \
+          --output text)
+        echo "new_task_definition_arn=$NEW_TASK_DEFINITION_ARN" >> $GITHUB_OUTPUT
+    
+    - name: Create AppSpec file
+      run: |
+        cat > appspec.yaml << EOL
+        version: 0.0
+        Resources:
+          - TargetService:
+              Type: AWS::ECS::Service
+              Properties:
+                TaskDefinition: ${{ steps.render-task-def.outputs.new_task_definition_arn }}
+                LoadBalancerInfo:
+                  ContainerName: "MyAppContainer"
+                  ContainerPort: 3000
+        EOL
+    
+    - name: Create deployment config file
+      run: |
+        cat > deployment-config.json << EOL
+        {
+          "applicationName": "${{ env.CODEDEPLOY_APPLICATION }}",
+          "deploymentGroupName": "${{ env.CODEDEPLOY_DEPLOYMENT_GROUP }}",
+          "revision": {
+            "revisionType": "AppSpecContent",
+            "appSpecContent": {
+              "content": "$(cat appspec.yaml | base64 -w 0)",
+              "sha256": "$(cat appspec.yaml | sha256sum | cut -d' ' -f1)"
+            }
+          }
+        }
+        EOL
+    
+    - name: Start CodeDeploy deployment
+      id: deploy
+      run: |
+        DEPLOYMENT_ID=$(aws deploy create-deployment \
+          --cli-input-json file://deployment-config.json \
+          --query 'deploymentId' \
+          --output text)
+        
+        echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
+        echo "Starting deployment $DEPLOYMENT_ID"
+    
+    - name: Wait for deployment to complete
+      run: |
+        echo "Waiting for deployment ${{ steps.deploy.outputs.deployment_id }} to complete..."
+        
+        while true; do
+          DEPLOYMENT_STATUS=$(aws deploy get-deployment \
+            --deployment-id ${{ steps.deploy.outputs.deployment_id }} \
+            --query 'deploymentInfo.status' \
+            --output text)
+          
+          echo "Deployment status: $DEPLOYMENT_STATUS"
+          
+          if [ "$DEPLOYMENT_STATUS" == "Succeeded" ]; then
+            echo "Deployment completed successfully!"
+            break
+          elif [ "$DEPLOYMENT_STATUS" == "Failed" ] || [ "$DEPLOYMENT_STATUS" == "Stopped" ]; then
+            echo "Deployment failed or was stopped"
+            exit 1
+          fi
+          
+          echo "Waiting for deployment to complete..."
+          sleep 30
+        done
