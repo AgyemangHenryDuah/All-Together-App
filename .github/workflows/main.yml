@@ -12,6 +12,8 @@ env:
   TASK_FAMILY: MyAppTask
   CONTAINER_NAME: MyAppContainer
   CONTAINER_PORT: 3000
+  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-tNrSazGsjV7B
+  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-1PFQ6HYAX0WD4
 jobs:
   deploy:
     name: Deploy to ECR and ECS
@@ -75,17 +77,43 @@ jobs:
     - name: Render new task definition
       id: render-task-def
       run: |
-        # Print the task definition for debugging
-        echo "Original task definition:"
-        cat task-definition.json
+        # Clean task-definition.json and remove unwanted fields
+        jq 'del(.taskDefinitionArn, .revision, .status, .requiresAttributes, .compatibilities, .registeredAt, .registeredBy)' task-definition.json > cleaned-task-definition.json
         
-        # Create a new task definition with updated image
+        # Update the image with the new one
         IMAGE_NAME="${{ steps.build-image.outputs.image }}"
         echo "Using image: $IMAGE_NAME"
-        
-        jq ".containerDefinitions[0].image = \"$IMAGE_NAME\"" task-definition.json > updated-task-definition.json
+        jq ".containerDefinitions[0].image = \"$IMAGE_NAME\"" cleaned-task-definition.json > updated-task-definition.json
         
         echo "Updated task definition:"
         cat updated-task-definition.json
+
         
-        # Remove
+        
+    - name: Register new task definition
+      id: register-task-def
+      run: |
+        NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated-task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text)
+        echo "new_task_definition_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+    - name: Debug environment variables
+      run: |
+        echo "CODEDEPLOY_APPLICATION: $CODEDEPLOY_APPLICATION"
+        echo "CODEDEPLOY_DEPLOYMENT_GROUP: $CODEDEPLOY_DEPLOYMENT_GROUP"
+
+    - name: Create CodeDeploy Deployment
+      run: |
+        aws deploy create-deployment \
+          --application-name "$CODEDEPLOY_APPLICATION" \
+          --deployment-group-name "$CODEDEPLOY_DEPLOYMENT_GROUP" \
+          --revision "$(cat <<EOF
+        {
+          "revisionType": "AppSpecContent",
+          "appSpecContent": {
+            "content": "{\"version\":1,\"Resources\":[{\"myApp\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"${{ steps.register-task-def.outputs.new_task_definition_arn }}\",\"LoadBalancerInfo\":{\"ContainerName\":\"$CONTAINER_NAME\",\"ContainerPort\":$CONTAINER_PORT}}}}]}"
+          }
+        }
+        EOF
+        )" \
+          --description "Blue/Green deployment triggered by GitHub Actions"
+
