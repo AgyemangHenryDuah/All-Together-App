@@ -96,6 +96,10 @@ jobs:
         NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated-task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text)
         echo "new_task_definition_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
 
+    - name: Debug environment variables
+      run: |
+        echo "CODEDEPLOY_APPLICATION: $CODEDEPLOY_APPLICATION"
+        echo "CODEDEPLOY_DEPLOYMENT_GROUP: $CODEDEPLOY_DEPLOYMENT_GROUP"
 
     - name: Create CodeDeploy Deployment
       run: aws deploy create-deployment \
