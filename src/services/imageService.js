@@ -7,7 +7,7 @@ import {
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { s3Client, bucketName } from '../config/s3.js';
 
-const ITEMS_PER_PAGE = 10;
+const ITEMS_PER_PAGE = 8;
 
 
 async function getSignedImageUrl(key) {
