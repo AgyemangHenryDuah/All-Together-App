@@ -12,6 +12,8 @@ env:
   TASK_FAMILY: MyAppTask
   CONTAINER_NAME: MyAppContainer
   CONTAINER_PORT: 3000
+  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-YDEqJp0DMCqo
+  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-1EBTQO01Q9J7P
 jobs:
   deploy:
     name: Deploy to ECR and ECS
