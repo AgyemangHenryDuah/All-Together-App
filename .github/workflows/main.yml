@@ -88,4 +88,17 @@ jobs:
         echo "Updated task definition:"
         cat updated-task-definition.json
         
-        # Remove
+        
+    - name: Register new task definition
+      id: register-task-def
+      run: |
+        #Register the new task definition
+        NEW_TASK_DEF_ARN=$(aws ecs register-task-definition --cli-input-json file://updated-task-definition.json --query 'taskDefinition.taskDefinitionArn' --output text)
+        echo "new_task_definition_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
+
+    - name: Create CodeDeploy Deployment
+      run: aws deploy create-deployment \
+          --application-name $CODEDEPLOY_APPLICATION \
+          --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP \
+          --revision '{"revisionType":"AppSpecContent","appSpecContent":{"content":"{\"version\":1,\"Resources\":[{\"myApp\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"'$NEW_TASK_DEF_ARN'\",\"LoadBalancerInfo\":{\"ContainerName\":\"'$CONTAINER_NAME'\",\"ContainerPort\":'$CONTAINER_PORT'}}}}]}}"}'
+          --description "Blue/Green deployment triggered by GitHub Actions"
