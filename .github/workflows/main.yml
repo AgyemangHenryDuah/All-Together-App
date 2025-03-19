@@ -9,8 +9,9 @@ env:
   IMAGE_TAG: henryagyemang_app
   ECS_SERVICE: MyAppService
   ECS_CLUSTER: MyAppCluster
-  CODEDEPLOY_APPLICATION: CodeDeployApplication
-  CODEDEPLOY_DEPLOYMENT_GROUP: CodeDeploymentGroup
+  TASK_FAMILY: MyAppTask
+  CONTAINER_NAME: MyAppContainer
+  CONTAINER_PORT: 3000
 jobs:
   deploy:
     name: Deploy to ECR and ECS
@@ -38,90 +39,53 @@ jobs:
         docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        
+    - name: Check AWS resources exist
+      run: |
+        echo "Checking ECS cluster..."
+        aws ecs describe-clusters --clusters $ECS_CLUSTER
+        
+        echo "Checking ECS service..."
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE
+        
+        echo "Checking CodeDeploy application..."
+        aws deploy get-application --application-name $CODEDEPLOY_APPLICATION || echo "CodeDeploy application not found: $CODEDEPLOY_APPLICATION"
+        
+        echo "Checking CodeDeploy deployment group..."
+        aws deploy get-deployment-group --application-name $CODEDEPLOY_APPLICATION --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP || echo "Deployment group not found: $CODEDEPLOY_DEPLOYMENT_GROUP"
     
     - name: Get current task definition
       id: task-def
       run: |
-        TASK_DEFINITION=$(aws ecs describe-task-definition --task-definition MyAppTask --query 'taskDefinition' --output json)
-        echo "$TASK_DEFINITION" > task-definition.json
-        echo "task_definition_arn=$(echo $TASK_DEFINITION | jq -r '.taskDefinitionArn')" >> $GITHUB_OUTPUT
+        # Use the latest active revision
+        TASK_DEF_ARN=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
+        
+        if [ -z "$TASK_DEF_ARN" ]; then
+          echo "No task definition found for service $ECS_SERVICE"
+          exit 1
+        fi
+        
+        echo "Using task definition: $TASK_DEF_ARN"
+        
+        # Get the task definition details
+        aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --query 'taskDefinition' --output json > task-definition.json
+        
+        echo "task_definition_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
     
     - name: Render new task definition
       id: render-task-def
       run: |
-        # Update the image in the task definition
-        CONTAINER_DEFINITIONS=$(cat task-definition.json | jq -r '.containerDefinitions')
-        UPDATED_CONTAINER_DEFINITIONS=$(echo $CONTAINER_DEFINITIONS | jq '.[0].image = "${{ steps.build-image.outputs.image }}"')
-        jq --argjson cd "$UPDATED_CONTAINER_DEFINITIONS" '.containerDefinitions = $cd' task-definition.json > updated-task-definition.json
+        # Print the task definition for debugging
+        echo "Original task definition:"
+        cat task-definition.json
         
-        # Register the new task definition and capture the ARN
-        NEW_TASK_DEFINITION_ARN=$(aws ecs register-task-definition \
-          --cli-input-json file://updated-task-definition.json \
-          --query 'taskDefinition.taskDefinitionArn' \
-          --output text)
-        echo "new_task_definition_arn=$NEW_TASK_DEFINITION_ARN" >> $GITHUB_OUTPUT
-    
-    - name: Create AppSpec file
-      run: |
-        cat > appspec.yaml << EOL
-        version: 0.0
-        Resources:
-          - TargetService:
-              Type: AWS::ECS::Service
-              Properties:
-                TaskDefinition: ${{ steps.render-task-def.outputs.new_task_definition_arn }}
-                LoadBalancerInfo:
-                  ContainerName: "MyAppContainer"
-                  ContainerPort: 3000
-        EOL
-    
-    - name: Create deployment config file
-      run: |
-        cat > deployment-config.json << EOL
-        {
-          "applicationName": "${{ env.CODEDEPLOY_APPLICATION }}",
-          "deploymentGroupName": "${{ env.CODEDEPLOY_DEPLOYMENT_GROUP }}",
-          "revision": {
-            "revisionType": "AppSpecContent",
-            "appSpecContent": {
-              "content": "$(cat appspec.yaml | base64 -w 0)",
-              "sha256": "$(cat appspec.yaml | sha256sum | cut -d' ' -f1)"
-            }
-          }
-        }
-        EOL
-    
-    - name: Start CodeDeploy deployment
-      id: deploy
-      run: |
-        DEPLOYMENT_ID=$(aws deploy create-deployment \
-          --cli-input-json file://deployment-config.json \
-          --query 'deploymentId' \
-          --output text)
+        # Create a new task definition with updated image
+        IMAGE_NAME="${{ steps.build-image.outputs.image }}"
+        echo "Using image: $IMAGE_NAME"
         
-        echo "deployment_id=$DEPLOYMENT_ID" >> $GITHUB_OUTPUT
-        echo "Starting deployment $DEPLOYMENT_ID"
-    
-    - name: Wait for deployment to complete
-      run: |
-        echo "Waiting for deployment ${{ steps.deploy.outputs.deployment_id }} to complete..."
+        jq ".containerDefinitions[0].image = \"$IMAGE_NAME\"" task-definition.json > updated-task-definition.json
         
-        while true; do
-          DEPLOYMENT_STATUS=$(aws deploy get-deployment \
-            --deployment-id ${{ steps.deploy.outputs.deployment_id }} \
-            --query 'deploymentInfo.status' \
-            --output text)
-          
-          echo "Deployment status: $DEPLOYMENT_STATUS"
-          
-          if [ "$DEPLOYMENT_STATUS" == "Succeeded" ]; then
-            echo "Deployment completed successfully!"
-            break
-          elif [ "$DEPLOYMENT_STATUS" == "Failed" ] || [ "$DEPLOYMENT_STATUS" == "Stopped" ]; then
-            echo "Deployment failed or was stopped"
-            exit 1
-          fi
-          
-          echo "Waiting for deployment to complete..."
-          sleep 30
-        done
+        echo "Updated task definition:"
+        cat updated-task-definition.json
+        
+        # Remove
