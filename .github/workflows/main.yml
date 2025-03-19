@@ -1,4 +1,4 @@
-name: Deploy to Amazon ECR
+name: Deploy to Amazon ECR and ECS with Blue/Green
 on:
   push:
     branches: [ "main" ]
@@ -7,28 +7,85 @@ env:
   ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
   ECR_REPOSITORY: all-together-repo
   IMAGE_TAG: henryagyemang_app
+  ECS_SERVICE: MyAppService
+  ECS_CLUSTER: MyAppCluster
+  TASK_FAMILY: MyAppTask
+  CONTAINER_NAME: MyAppContainer
+  CONTAINER_PORT: 3000
 jobs:
   deploy:
-    name: Deploy to ECR
+    name: Deploy to ECR and ECS
     runs-on: ubuntu-latest
     environment: production
     steps:
     - name: Checkout code
       uses: actions/checkout@v3
+      
     - name: Configure AWS credentials
       uses: aws-actions/configure-aws-credentials@v2
       with:
         aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
         aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: us-east-1
+        aws-region: ${{ env.AWS_REGION }}
+        
     - name: Login to Amazon Public ECR
       run: |
         aws ecr-public get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin public.ecr.aws
+        
     - name: Build, tag, and push image to Amazon ECR
       id: build-image
-      
       run: |
         # Build a docker container and push it to ECR
         docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
         docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
         echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+        
+    - name: Check AWS resources exist
+      run: |
+        echo "Checking ECS cluster..."
+        aws ecs describe-clusters --clusters $ECS_CLUSTER
+        
+        echo "Checking ECS service..."
+        aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE
+        
+        echo "Checking CodeDeploy application..."
+        aws deploy get-application --application-name $CODEDEPLOY_APPLICATION || echo "CodeDeploy application not found: $CODEDEPLOY_APPLICATION"
+        
+        echo "Checking CodeDeploy deployment group..."
+        aws deploy get-deployment-group --application-name $CODEDEPLOY_APPLICATION --deployment-group-name $CODEDEPLOY_DEPLOYMENT_GROUP || echo "Deployment group not found: $CODEDEPLOY_DEPLOYMENT_GROUP"
+    
+    - name: Get current task definition
+      id: task-def
+      run: |
+        # Use the latest active revision
+        TASK_DEF_ARN=$(aws ecs describe-services --cluster $ECS_CLUSTER --services $ECS_SERVICE --query 'services[0].taskDefinition' --output text)
+        
+        if [ -z "$TASK_DEF_ARN" ]; then
+          echo "No task definition found for service $ECS_SERVICE"
+          exit 1
+        fi
+        
+        echo "Using task definition: $TASK_DEF_ARN"
+        
+        # Get the task definition details
+        aws ecs describe-task-definition --task-definition $TASK_DEF_ARN --query 'taskDefinition' --output json > task-definition.json
+        
+        echo "task_definition_arn=$TASK_DEF_ARN" >> $GITHUB_OUTPUT
+    
+    - name: Render new task definition
+      id: render-task-def
+      run: |
+        # Print the task definition for debugging
+        echo "Original task definition:"
+        cat task-definition.json
+        
+        # Create a new task definition with updated image
+        IMAGE_NAME="${{ steps.build-image.outputs.image }}"
+        echo "Using image: $IMAGE_NAME"
+        
+        jq ".containerDefinitions[0].image = \"$IMAGE_NAME\"" task-definition.json > updated-task-definition.json
+        
+        echo "Updated task definition:"
+        cat updated-task-definition.json
+        
+        # Remove
