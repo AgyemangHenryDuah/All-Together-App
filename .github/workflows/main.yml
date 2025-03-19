@@ -138,10 +138,14 @@ jobs:
 
       - name: Start CodeDeploy deployment
         run: |
+          # Convert the AppSpec YAML to a single line JSON-escaped string
+          APPSPEC_CONTENT=$(cat appspec.yaml | awk '{printf "%s\\n", $0}' | sed 's/"/\\"/g')
+          
+          # Start deployment with properly escaped content
           DEPLOYMENT_ID=$(aws deploy create-deployment \
             --application-name ${{ steps.codedeploy-info.outputs.app_name }} \
             --deployment-group-name ${{ steps.codedeploy-info.outputs.group_name }} \
-            --revision revisionType=AppSpecContent,appSpecContent="{\"content\":\"$(cat appspec.yaml | sed 's/"/\\"/g')\"}" \
+            --revision 'revisionType=AppSpecContent,appSpecContent={"content":"'$APPSPEC_CONTENT'"}' \
             --query 'deploymentId' \
             --output text)
           
