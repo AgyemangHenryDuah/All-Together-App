@@ -105,5 +105,6 @@ jobs:
       run: aws deploy create-deployment \
         --application-name "$CODEDEPLOY_APPLICATION" \
         --deployment-group-name "$CODEDEPLOY_DEPLOYMENT_GROUP" \
-        --revision '{"revisionType":"AppSpecContent","appSpecContent":{"content":"{\"version\":1,\"Resources\":[{\"myApp\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"'$NEW_TASK_DEF_ARN'\",\"LoadBalancerInfo\":{\"ContainerName\":\"'$CONTAINER_NAME'\",\"ContainerPort\":'$CONTAINER_PORT'}}}}]}}"}' \
-        --description "Blue/Green deployment triggered by GitHub Actions" \
+        --revision '{"revisionType":"AppSpecContent","appSpecContent":{"content":"{\"version\":1,\"Resources\":[{\"myApp\":{\"Type\":\"AWS::ECS::Service\",\"Properties\":{\"TaskDefinition\":\"${{ steps.register-task-def.outputs.new_task_definition_arn }}\",\"LoadBalancerInfo\":{\"ContainerName\":\"'$CONTAINER_NAME'\",\"ContainerPort\":'$CONTAINER_PORT'}}}}]}}"}' \
+        --description "Blue/Green deployment triggered by GitHub Actions"
+
