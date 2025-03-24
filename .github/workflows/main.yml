@@ -14,7 +14,7 @@ env:
   ECS_SERVICE: MyAppService
   ECS_TASK_FAMILY: MyAppTask
   CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-u7UaR6VfHUr2
-  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-ZLHF5U43MB2G
+  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-APIB0A0ZBADH
   CONTAINER_DEFINITION: MyAppContainer
 
 jobs:
