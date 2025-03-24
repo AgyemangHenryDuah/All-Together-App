@@ -42,6 +42,13 @@ jobs:
           docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
           docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
           echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+
+      - name: Get AWS Account ID
+        id: get-aws-account
+        run: |
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
+          
       - name: Generate task definition JSON
         run: |
           # Create a task definition JSON file with the new image
@@ -87,11 +94,7 @@ jobs:
           }
           EOF
 
-      - name: Get AWS Account ID
-        id: get-aws-account
-        run: |
-          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
-          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
+      
 
       - name: Update task definition with account ID
         run: |
