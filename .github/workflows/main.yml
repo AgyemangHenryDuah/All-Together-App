@@ -13,8 +13,8 @@ env:
   ECS_CLUSTER: MyAppCluster
   ECS_SERVICE: MyAppService
   ECS_TASK_FAMILY: MyAppTask
-  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-tNrSazGsjV7B
-  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-1PFQ6HYAX0WD4
+  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-xrW8G7qxK0nj
+  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-ZLHF5U43MB2G
   CONTAINER_DEFINITION: MyAppContainer
 
 jobs:
@@ -48,7 +48,7 @@ jobs:
         run: |
           AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
           echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
-          
+
       - name: Generate task definition JSON
         run: |
           # Create a task definition JSON file with the new image
