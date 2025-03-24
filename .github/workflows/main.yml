@@ -1,159 +1,156 @@
-name: CI/CD
+name: Deploy to Amazon ECR
+# Trigger on push to main branch
 on:
   push:
-    branches: [ "main" ]
-
+    branches: ["main"]
+  pull_request:
+    branches: [main]
 env:
-  # Global environment variables available to all jobs
   AWS_REGION: us-east-1
-  STACK_NAME: All-Together-Lab
-  
+  ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
+  ECR_REPOSITORY: all-together-repo
+  IMAGE_TAG: henryagyemang_app
+  ECS_CLUSTER: MyAppCluster
+  ECS_SERVICE: MyAppService
+  ECS_TASK_FAMILY: MyAppTask
+  CODEDEPLOY_APPLICATION: All-Together-Lab-CodeDeployApplication-tNrSazGsjV7B
+  CODEDEPLOY_DEPLOYMENT_GROUP: All-Together-Lab-CodeDeploymentGroup-1PFQ6HYAX0WD4
+  CONTAINER_DEFINITION: MyAppContainer
+
 jobs:
-  build-and-push:
-    name: Build and Push to ECR
-    runs-on: ubuntu-latest
-    
-    env:
-      # ECR configuration
-      ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
-      ECR_REPOSITORY: all-together-repo
-      IMAGE_TAG: ${{ github.actor }}_app
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v3
-    
-    - name: Configure AWS credentials
-      uses: aws-actions/configure-aws-credentials@v2
-      with:
-        aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
-        aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-        aws-region: ${{ env.AWS_REGION }}
-    
-    - name: Login to Amazon Public ECR
-      run: |
-        aws ecr-public get-login-password --region ${{ env.AWS_REGION }} | docker login --username AWS --password-stdin public.ecr.aws
-    
-    - name: Build, tag, and push image to Amazon ECR
-      id: build-image
-      run: |
-        docker build -t ${{ env.ECR_PUBLIC_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }} .
-        docker push ${{ env.ECR_PUBLIC_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}
-        echo "image=${{ env.ECR_PUBLIC_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" >> $GITHUB_OUTPUT
-
   deploy:
-    name: Deploy with Blue/Green Strategy
-    needs: build-and-push
+    name: Deploy to ECR
     runs-on: ubuntu-latest
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
-    
-    env:
-      # ECR configuration (same as build job)
-      ECR_PUBLIC_REGISTRY: public.ecr.aws/e0u3b5m8
-      ECR_REPOSITORY: all-together-repo
-      IMAGE_TAG: ${{ github.actor }}_app
-      
-      # ECS configuration
-      ECS_TASK_FAMILY: MyAppTask  # From CloudFormation template
-      ECS_CPU: 512                # From CloudFormation template
-      ECS_MEMORY: 1024            # From CloudFormation template
-      
-      # Container configuration
-      CONTAINER_NAME: MyAppContainer  # From CloudFormation template
-      CONTAINER_PORT: 3000            # From CloudFormation template
-
+    environment: production
     steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v2
         with:
           aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
           aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region: ${{ env.AWS_REGION }}
-      
-      - name: Register new task definition
-        id: task-def
+          aws-region: us-east-1
+      - name: Login to Amazon Public ECR
         run: |
-          # Get current task definition
-          aws ecs describe-task-definition --task-definition ${{ env.ECS_TASK_FAMILY }} --query 'taskDefinition' > task-definition.json || echo "Task definition not found, will create new one"
+          aws ecr-public get-login-password --region $AWS_REGION | docker login --username AWS --password-stdin public.ecr.aws
 
-          if [ -s task-definition.json ]; then
-            # Update container image in task definition to use the latest tag
-            jq --arg IMAGE "${{ env.ECR_PUBLIC_REGISTRY }}/${{ env.ECR_REPOSITORY }}:${{ env.IMAGE_TAG }}" '.containerDefinitions[0].image = $IMAGE' task-definition.json > new-task-definition.json
-            
-            # Register new task definition version
-            NEW_TASK_DEF_ARN=$(aws ecs register-task-definition \
-              --family ${{ env.ECS_TASK_FAMILY }} \
-              --requires-compatibilities FARGATE \
-              --network-mode awsvpc \
-              --cpu ${{ env.ECS_CPU }} \
-              --memory ${{ env.ECS_MEMORY }} \
-              --execution-role-arn $(jq -r '.executionRoleArn' task-definition.json) \
-              --task-role-arn $(jq -r '.taskRoleArn' task-definition.json) \
-              --container-definitions "$(jq '.containerDefinitions' new-task-definition.json)" \
-              --query 'taskDefinition.taskDefinitionArn' \
-              --output text)
-          else
-            echo "Failed to get task definition. Check if it exists or if you have correct permissions."
-            exit 1
-          fi
-
-          echo "task_definition_arn=$NEW_TASK_DEF_ARN" >> $GITHUB_OUTPUT
-
-      - name: Create AppSpec file
+      - name: Build, tag, and push image to Amazon ECR
+        id: build-image
         run: |
-          cat > appspec.yaml << EOF
-          version: 0.0
-          Resources:
-            - TargetService:
-                Type: AWS::ECS::Service
-                Properties:
-                  TaskDefinition: "${{ steps.task-def.outputs.task_definition_arn }}"
-                  LoadBalancerInfo:
-                    ContainerName: "${{ env.CONTAINER_NAME }}"
-                    ContainerPort: ${{ env.CONTAINER_PORT }}
-                  PlatformVersion: "LATEST"
+          # Build a docker container and push it to ECR
+          docker build -t $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG .
+          docker push $ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG
+          echo "image=$ECR_PUBLIC_REGISTRY/$ECR_REPOSITORY:$IMAGE_TAG" >> $GITHUB_OUTPUT
+      - name: Generate task definition JSON
+        run: |
+          # Create a task definition JSON file with the new image
+          cat <<EOF > task-definition.json
+          {
+            "family": "${{ env.ECS_TASK_FAMILY }}",
+            "cpu": "512",
+            "memory": "1024",
+            "networkMode": "awsvpc",
+            "requiresCompatibilities": ["FARGATE"],
+            "taskRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ECSTaskRole",
+            "executionRoleArn": "arn:aws:iam::${AWS_ACCOUNT_ID}:role/ECSExecutionRole",
+            "containerDefinitions": [
+              {
+                "name": "${{ env.CONTAINER_DEFINITION }}",
+                "image": "${{ steps.build-image.outputs.image }}",
+                "essential": true,
+                "portMappings": [
+                  {
+                    "containerPort": 3000,
+                    "hostPort": 3000,
+                    "protocol": "tcp"
+                  }
+                ],
+                "logConfiguration": {
+                  "logDriver": "awslogs",
+                  "options": {
+                    "awslogs-group": "/ecs/MyAppLogs",
+                    "awslogs-region": "${{ env.AWS_REGION }}",
+                    "awslogs-stream-prefix": "ecs"
+                  }
+                },
+                "environment": [
+                    {"name": "AWS_BUCKET_NAME", "value": "myapp-bucket-${AWS_ACCOUNT_ID}"},
+                    {"name": "S3_BUCKET_URL", "value": "https://myapp-bucket-${AWS_ACCOUNT_ID}.s3.amazonaws.com"}
+                ],
+                "secrets": [
+                    {"name": "AWS_ACCESS_KEY_ID", "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:All-Together-LabSecretKey:AWS_ACCESS_KEY_ID::"},
+                    {"name": "AWS_SECRET_ACCESS_KEY", "valueFrom": "arn:aws:secretsmanager:${AWS_REGION}:${AWS_ACCOUNT_ID}:secret:All-Together-LabSecretKey:AWS_SECRET_ACCESS_KEY::"}
+                ]
+              }
+            ]
+          }
           EOF
 
-          # Print the AppSpec file
-          cat appspec.yaml
-
-      - name: Get CodeDeploy application and deployment group names
-        id: codedeploy-info
+      - name: Get AWS Account ID
+        id: get-aws-account
         run: |
-          # Try to get names from CloudFormation outputs first
-          APP_NAME=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='CodeDeployApplicationName'].OutputValue" --output text)
-          GROUP_NAME=$(aws cloudformation describe-stacks --stack-name ${{ env.STACK_NAME }} --query "Stacks[0].Outputs[?OutputKey=='DeploymentGroupName'].OutputValue" --output text)
-          
-          # If not found, try to get the physical resource IDs
-          if [ -z "$APP_NAME" ] || [ "$APP_NAME" = "None" ]; then
-            APP_NAME=$(aws cloudformation describe-stack-resource --stack-name ${{ env.STACK_NAME }} --logical-resource-id CodeDeployApplication --query "StackResourceDetail.PhysicalResourceId" --output text)
-          fi
-          
-          if [ -z "$GROUP_NAME" ] || [ "$GROUP_NAME" = "None" ]; then
-            GROUP_NAME=$(aws cloudformation describe-stack-resource --stack-name ${{ env.STACK_NAME }} --logical-resource-id CodeDeploymentGroup --query "StackResourceDetail.PhysicalResourceId" --output text)
-          fi
-          
-          echo "app_name=$APP_NAME" >> $GITHUB_OUTPUT
-          echo "group_name=$GROUP_NAME" >> $GITHUB_OUTPUT
+          AWS_ACCOUNT_ID=$(aws sts get-caller-identity --query 'Account' --output text)
+          echo "AWS_ACCOUNT_ID=$AWS_ACCOUNT_ID" >> $GITHUB_ENV
 
-      - name: Start CodeDeploy deployment
+      - name: Update task definition with account ID
         run: |
-          # Convert the AppSpec YAML to a single line JSON-escaped string
-          APPSPEC_JSON=$(cat appspec.yaml | jq -R -s '{content: .}')
-          echo "$APPSPEC_JSON" > appspec.json
-          
-          # Start deployment with properly escaped content
+          # Replace AWS_ACCOUNT_ID placeholder with actual account ID
+          sed -i "s/\${AWS_ACCOUNT_ID}/$AWS_ACCOUNT_ID/g" task-definition.json
+          sed -i "s/\${AWS_REGION}/$AWS_REGION/g" task-definition.json
+
+      - name: Register new task definition
+        run: |
+          # Register the new task definition and capture the revision number
+          TASK_DEFINITION_ARN=$(aws ecs register-task-definition --cli-input-json file://task-definition.json --region ${{ env.AWS_REGION }} --query 'taskDefinition.taskDefinitionArn' --output text)
+          echo "Task Definition ARN: $TASK_DEFINITION_ARN"
+          echo "task_definition_arn=$TASK_DEFINITION_ARN" >> $GITHUB_ENV
+
+      - name: Generate appspec.json for CodeDeploy
+        run: |
+          # Create an appspec.json file for CodeDeploy
+          cat <<EOF > appspec.json
+          {
+            "version": 0.0,
+            "Resources": [
+              {
+                "TargetService": {
+                  "Type": "AWS::ECS::Service",
+                  "Properties": {
+                    "TaskDefinition": "${{ env.task_definition_arn }}",
+                    "LoadBalancerInfo": {
+                      "ContainerName": "${{ env.CONTAINER_DEFINITION }}",
+                      "ContainerPort": 3000
+                    }
+                  }
+                }
+              }
+            ]
+          }
+          EOF
+
+      - name: Install jq
+        run: sudo apt-get install -y jq
+
+      - name: Trigger CodeDeploy deployment
+        run: |
+          # Read appspec.json and escape the content properly
+          APPSPEC_CONTENT=$(cat appspec.json | jq -c -r @json)
+
+          # Escape any inner quotes so that it's valid JSON for AWS
+          ESCAPED_APPSPEC_CONTENT=$(echo $APPSPEC_CONTENT | sed 's/"/\\"/g')
+
+          # Create a deployment with the appspec content as a string
           DEPLOYMENT_ID=$(aws deploy create-deployment \
-            --application-name ${{ steps.codedeploy-info.outputs.app_name }} \
-            --deployment-group-name ${{ steps.codedeploy-info.outputs.group_name }} \
-            --revision 'revisionType=AppSpecContent,appSpecContent={"content":"'$APPSPEC_CONTENT'"}' \
-            --query 'deploymentId' \
-            --output text)
-          
-          echo "Started deployment: $DEPLOYMENT_ID"
-
-          # Monitor the deployment status
-          aws deploy get-deployment --deployment-id $DEPLOYMENT_ID
+            --application-name ${{ env.CODEDEPLOY_APPLICATION }} \
+            --deployment-group-name ${{ env.CODEDEPLOY_DEPLOYMENT_GROUP }} \
+            --deployment-config-name CodeDeployDefault.ECSAllAtOnce \
+            --description "Deployment triggered by GitHub Actions" \
+            --revision "{\"revisionType\":\"AppSpecContent\",\"appSpecContent\":{\"content\":\"$ESCAPED_APPSPEC_CONTENT\"}}" \
+            --region ${{ env.AWS_REGION }} \
+            --query 'deploymentId' --output text)
 
           echo "Deployment ID: $DEPLOYMENT_ID"
-          echo "Monitor the deployment progress in the AWS CodeDeploy console."
+
+          # Wait for the deployment to complete
+          aws deploy get-deployment --deployment-id $DEPLOYMENT_ID --region ${{ env.AWS_REGION }}
