@@ -627,341 +627,343 @@
                         "ActionOnTimeout": "CONTINUE_DEPLOYMENT"
                     }
                 },
-                "TrafficRoutingConfig": {
-                    "Type": "TimeBasedCanary",
-                    "TimeBasedCanary": {
-                        "CanaryPercentage": 10,
-                        "CanaryInterval": 5
-                    },
-                    "LoadBalancerInfo": {
-                        "TargetGroupPairInfoList": [
-                            {
-                                "TargetGroups": [
-                                    {
-                                        "Name": "BlueTargetGroup"
-                                    },
-                                    {
-                                        "Name": "GreenTargetGroup"
-                                    }
-                                ],
-                                "ProdTrafficRoute": {
-                                    "ListenerArns": [
-                                        {
-                                            "Ref": "ALBListener"
-                                        }
-                                    ]
-                                }
-                            }
-                        ]
-                    },
-                    "ECSServices": [
+                "LoadBalancerInfo": {
+                    "TargetGroupPairInfoList": [
                         {
-                            "ClusterName": {
-                                "Ref": "ECSCluster"
-                            },
-                            "ServiceName": {
-                                "Fn::GetAtt": [
-                                    "ECSService",
-                                    "Name"
+                            "TargetGroups": [
+                                {
+                                    "Name": "BlueTargetGroup"
+                                },
+                                {
+                                    "Name": "GreenTargetGroup"
+                                }
+                            ],
+                            "ProdTrafficRoute": {
+                                "ListenerArns": [
+                                    {
+                                        "Ref": "ALBListener"
+                                    }
                                 ]
+                            }
+                        }
+                    ]
+                },
+                "ECSServices": [
+                    {
+                        "ClusterName": {
+                            "Ref": "ECSCluster"
+                        },
+                        "ServiceName": {
+                            "Fn::GetAtt": [
+                                "ECSService",
+                                "Name"
+                            ]
+                        }
+                    }
+                ],
+                "AlarmConfiguration": {
+                    "Alarms": [
+                        {
+                            "Name": {
+                                "Ref": "ALB5XXErrorsAlarm"
+                            }
+                        },
+                        {
+                            "Name": {
+                                "Ref": "ALBHighLatencyAlarm"
                             }
                         }
                     ],
-                    "AlarmConfiguration": {
-                        "Alarms": [
-                            {
-                                "Name": {
-                                    "Ref": "ALB5XXErrorsAlarm"
+                    "Enabled": "true"
+                }
+            }
+        },
+        "BlueTargetGroup": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "Name": "BlueTargetGroup",
+                "Port": 3000,
+                "Protocol": "HTTP",
+                "TargetType": "ip",
+                "VpcId": {
+                    "Ref": "LabVPC"
+                },
+                "HealthCheckPath": "/",
+                "HealthCheckIntervalSeconds": 30
+            }
+        },
+        "GreenTargetGroup": {
+            "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
+            "Properties": {
+                "Name": "GreenTargetGroup",
+                "Port": 3000,
+                "Protocol": "HTTP",
+                "TargetType": "ip",
+                "VpcId": {
+                    "Ref": "LabVPC"
+                },
+                "HealthCheckPath": "/",
+                "HealthCheckIntervalSeconds": 30
+            }
+        },
+        "CodeDeployRole": {
+            "Type": "AWS::IAM::Role",
+            "Properties": {
+                "AssumeRolePolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "Service": "codedeploy.amazonaws.com"
+                            },
+                            "Action": "sts:AssumeRole"
+                        }
+                    ]
+                },
+                "Policies": [
+                    {
+                        "PolicyName": "CodeDeployPolicy",
+                        "PolicyDocument": {
+                            "Version": "2012-10-17",
+                            "Statement": [
+                                {
+                                    "Effect": "Allow",
+                                    "Action": [
+                                        "ecs:DescribeServices",
+                                        "ecs:UpdateService",
+                                        "elasticloadbalancing:DescribeListeners",
+                                        "elasticloadbalancing:ModifyListener",
+                                        "elasticloadbalancing:DescribeRules",
+                                        "elasticloadbalancing:ModifyRule",
+                                        "elasticloadbalancing:DescribeTargetGroups",
+                                        "elasticloadbalancing:DescribeTargetHealth",
+                                        "s3:GetObject",
+                                        "s3:GetObjectVersion",
+                                        "cloudwatch:DescribeAlarms",
+                                        "cloudwatch:GetMetricStatistics",
+                                        "cloudwatch:ListMetrics",
+                                        "cloudwatch:PutMetricData",
+                                        "cloudwatch:GetMetricData",
+                                        "logs:CreateLogGroup",
+                                        "logs:CreateLogStream",
+                                        "logs:PutLogEvents",
+                                        "logs:DescribeLogStreams"
+                                    ],
+                                    "Resource": "*"
+                                }
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "CloudWatchGroup": {
+            "Type": "AWS::Logs::LogGroup",
+            "Properties": {
+                "LogGroupName": "/ecs/MyAppLogs",
+                "RetentionInDays": 30
+            }
+        },
+        "ECSAutoScalingTarget": {
+            "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
+            "DependsOn": [
+                "ECSService",
+                "ECSAutoScalingRole"
+            ],
+            "Properties": {
+                "MaxCapacity": 4,
+                "MinCapacity": 2,
+                "ResourceId": "service/MyAppCluster/MyAppService",
+                "ScalableDimension": "ecs:service:DesiredCount",
+                "ServiceNamespace": "ecs",
+                "RoleARN": {
+                    "Fn::GetAtt": [
+                        "ECSAutoScalingRole",
+                        "Arn"
+                    ]
+                }
+            }
+        },
+        "ECSAutoScalingPolicy": {
+            "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
+            "Properties": {
+                "PolicyName": "CPUScalingPolicy",
+                "PolicyType": "TargetTrackingScaling",
+                "ScalingTargetId": {
+                    "Ref": "ECSAutoScalingTarget"
+                },
+                "TargetTrackingScalingPolicyConfiguration": {
+                    "PredefinedMetricSpecification": {
+                        "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
+                    },
+                    "ScaleInCooldown": 60,
+                    "ScaleOutCooldown": 60,
+                    "TargetValue": 50
+                }
+            }
+        },
+        "AppS3Bucket": {
+            "Type": "AWS::S3::Bucket",
+            "Properties": {
+                "BucketName": {
+                    "Fn::Sub": "myapp-bucket-${AWS::AccountId}"
+                },
+                "AccessControl": "Private",
+                "VersioningConfiguration": {
+                    "Status": "Enabled"
+                }
+            }
+        },
+        "S3BucketPolicy": {
+            "Type": "AWS::S3::BucketPolicy",
+            "DependsOn": "AppS3Bucket",
+            "Properties": {
+                "Bucket": {
+                    "Ref": "AppS3Bucket"
+                },
+                "PolicyDocument": {
+                    "Version": "2012-10-17",
+                    "Statement": [
+                        {
+                            "Effect": "Allow",
+                            "Principal": {
+                                "AWS": {
+                                    "Fn::GetAtt": [
+                                        "ECSTaskRole",
+                                        "Arn"
+                                    ]
                                 }
                             },
-                            {
-                                "Name": {
-                                    "Ref": "ALBHighLatencyAlarm"
+                            "Action": [
+                                "s3:GetObject",
+                                "s3:PutObject",
+                                "s3:DeleteObject",
+                                "s3:ListBucket"
+                            ],
+                            "Resource": [
+                                {
+                                    "Fn::GetAtt": [
+                                        "AppS3Bucket",
+                                        "Arn"
+                                    ]
+                                },
+                                {
+                                    "Fn::Sub": "${AppS3Bucket.Arn}/*"
                                 }
-                            }
-                        ],
-                        "Enabled": "true"
-                    }
-                }
-            },
-            "BlueTargetGroup": {
-                "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
-                "Properties": {
-                    "Name": "BlueTargetGroup",
-                    "Port": 3000,
-                    "Protocol": "HTTP",
-                    "TargetType": "ip",
-                    "VpcId": {
-                        "Ref": "LabVPC"
-                    },
-                    "HealthCheckPath": "/",
-                    "HealthCheckIntervalSeconds": 30
-                }
-            },
-            "GreenTargetGroup": {
-                "Type": "AWS::ElasticLoadBalancingV2::TargetGroup",
-                "Properties": {
-                    "Name": "GreenTargetGroup",
-                    "Port": 3000,
-                    "Protocol": "HTTP",
-                    "TargetType": "ip",
-                    "VpcId": {
-                        "Ref": "LabVPC"
-                    },
-                    "HealthCheckPath": "/",
-                    "HealthCheckIntervalSeconds": 30
-                }
-            },
-            "CodeDeployRole": {
-                "Type": "AWS::IAM::Role",
-                "Properties": {
-                    "AssumeRolePolicyDocument": {
-                        "Version": "2012-10-17",
-                        "Statement": [
-                            {
-                                "Effect": "Allow",
-                                "Principal": {
-                                    "Service": "codedeploy.amazonaws.com"
-                                },
-                                "Action": "sts:AssumeRole"
-                            }
-                        ]
-                    },
-                    "Policies": [
-                        {
-                            "PolicyName": "CodeDeployPolicy",
-                            "PolicyDocument": {
-                                "Version": "2012-10-17",
-                                "Statement": [
-                                    {
-                                        "Effect": "Allow",
-                                        "Action": [
-                                            "ecs:DescribeServices",
-                                            "ecs:UpdateService",
-                                            "elasticloadbalancing:DescribeListeners",
-                                            "elasticloadbalancing:ModifyListener",
-                                            "elasticloadbalancing:DescribeRules",
-                                            "elasticloadbalancing:ModifyRule",
-                                            "elasticloadbalancing:DescribeTargetGroups",
-                                            "elasticloadbalancing:DescribeTargetHealth",
-                                            "s3:GetObject",
-                                            "s3:GetObjectVersion"
-                                        ],
-                                        "Resource": "*"
-                                    }
-                                ]
-                            }
-                        }
-                    ]
-                }
-            },
-            "CloudWatchGroup": {
-                "Type": "AWS::Logs::LogGroup",
-                "Properties": {
-                    "LogGroupName": "/ecs/MyAppLogs",
-                    "RetentionInDays": 30
-                }
-            },
-            "ECSAutoScalingTarget": {
-                "Type": "AWS::ApplicationAutoScaling::ScalableTarget",
-                "DependsOn": [
-                    "ECSService",
-                    "ECSAutoScalingRole"
-                ],
-                "Properties": {
-                    "MaxCapacity": 4,
-                    "MinCapacity": 2,
-                    "ResourceId": "service/MyAppCluster/MyAppService",
-                    "ScalableDimension": "ecs:service:DesiredCount",
-                    "ServiceNamespace": "ecs",
-                    "RoleARN": {
-                        "Fn::GetAtt": [
-                            "ECSAutoScalingRole",
-                            "Arn"
-                        ]
-                    }
-                }
-            },
-            "ECSAutoScalingPolicy": {
-                "Type": "AWS::ApplicationAutoScaling::ScalingPolicy",
-                "Properties": {
-                    "PolicyName": "CPUScalingPolicy",
-                    "PolicyType": "TargetTrackingScaling",
-                    "ScalingTargetId": {
-                        "Ref": "ECSAutoScalingTarget"
-                    },
-                    "TargetTrackingScalingPolicyConfiguration": {
-                        "PredefinedMetricSpecification": {
-                            "PredefinedMetricType": "ECSServiceAverageCPUUtilization"
-                        },
-                        "ScaleInCooldown": 60,
-                        "ScaleOutCooldown": 60,
-                        "TargetValue": 50
-                    }
-                }
-            },
-            "AppS3Bucket": {
-                "Type": "AWS::S3::Bucket",
-                "Properties": {
-                    "BucketName": {
-                        "Fn::Sub": "myapp-bucket-${AWS::AccountId}"
-                    },
-                    "AccessControl": "Private",
-                    "VersioningConfiguration": {
-                        "Status": "Enabled"
-                    }
-                }
-            },
-            "S3BucketPolicy": {
-                "Type": "AWS::S3::BucketPolicy",
-                "DependsOn": "AppS3Bucket",
-                "Properties": {
-                    "Bucket": {
-                        "Ref": "AppS3Bucket"
-                    },
-                    "PolicyDocument": {
-                        "Version": "2012-10-17",
-                        "Statement": [
-                            {
-                                "Effect": "Allow",
-                                "Principal": {
-                                    "AWS": {
-                                        "Fn::GetAtt": [
-                                            "ECSTaskRole",
-                                            "Arn"
-                                        ]
-                                    }
-                                },
-                                "Action": [
-                                    "s3:GetObject",
-                                    "s3:PutObject",
-                                    "s3:DeleteObject",
-                                    "s3:ListBucket"
-                                ],
-                                "Resource": [
-                                    {
-                                        "Fn::GetAtt": [
-                                            "AppS3Bucket",
-                                            "Arn"
-                                        ]
-                                    },
-                                    {
-                                        "Fn::Sub": "${AppS3Bucket.Arn}/*"
-                                    }
-                                ]
-                            }
-                        ]
-                    }
-                }
-            },
-            "ALB5XXErrorsAlarm": {
-                "Type": "AWS::CloudWatch::Alarm",
-                "Properties": {
-                    "AlarmName": "ALB-5XX-Errors-Alarm",
-                    "MetricName": "HTTPCode_Target_5XX_Count",
-                    "Namespace": "AWS/ApplicationELB",
-                    "Statistic": "Sum",
-                    "Period": 60,
-                    "EvaluationPeriods": 2,
-                    "Threshold": 5,
-                    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-                    "Dimensions": [
-                        {
-                            "Name": "LoadBalancer",
-                            "Value": {
-                                "Fn::GetAtt": [
-                                    "AppLoadBalancer",
-                                    "LoadBalancerFullName"
-                                ]
-                            }
-                        }
-                    ]
-                }
-            },
-            "ALBHighLatencyAlarm": {
-                "Type": "AWS::CloudWatch::Alarm",
-                "Properties": {
-                    "AlarmName": "ALB-High-Latency-Alarm",
-                    "MetricName": "TargetResponseTime",
-                    "Namespace": "AWS/ApplicationELB",
-                    "Statistic": "Average",
-                    "Period": 60,
-                    "EvaluationPeriods": 2,
-                    "Threshold": 5,
-                    "ComparisonOperator": "GreaterThanOrEqualToThreshold",
-                    "Dimensions": [
-                        {
-                            "Name": "LoadBalancer",
-                            "Value": {
-                                "Fn::GetAtt": [
-                                    "AppLoadBalancer",
-                                    "LoadBalancerFullName"
-                                ]
-                            }
+                            ]
                         }
                     ]
                 }
             }
         },
-        "Outputs": {
-            "VPCID": {
-                "Value": {
-                    "Ref": "LabVPC"
-                }
-            },
-            "PublicSubnet1ID": {
-                "Value": {
-                    "Ref": "PublicSubnet1"
-                }
-            },
-            "PublicSubnet2ID": {
-                "Value": {
-                    "Ref": "PublicSubnet2"
-                }
-            },
-            "PrivateSubnet1ID": {
-                "Value": {
-                    "Ref": "PrivateSubnet1"
-                }
-            },
-            "PrivateSubnet2ID": {
-                "Value": {
-                    "Ref": "PrivateSubnet2"
-                }
-            },
-            "LoadBalancerDNSName": {
-                "Description": "DNS name of the Application Load Balancer",
-                "Value": {
-                    "Fn::GetAtt": [
-                        "AppLoadBalancer",
-                        "DNSName"
-                    ]
-                }
-            },
-            "ECSClusterName": {
-                "Value": {
-                    "Ref": "ECSCluster"
-                }
-            },
-            "TaskDefinitionArn": {
-                "Value": {
-                    "Ref": "ECSTaskDefinition"
-                }
-            },
-            "ServiceName": {
-                "Value": {
-                    "Ref": "ECSService"
-                }
-            },
-            "S3BucketName": {
-                "Value": {
-                    "Ref": "AppS3Bucket"
-                }
-            },
-            "S3BucketURL": {
-                "Value": {
-                    "Fn::Sub": "https://${AppS3Bucket}.s3.amazonaws.com"
-                }
+        "ALB5XXErrorsAlarm": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmName": "ALB-5XX-Errors-Alarm",
+                "MetricName": "HTTPCode_Target_5XX_Count",
+                "Namespace": "AWS/ApplicationELB",
+                "Statistic": "Sum",
+                "Period": 60,
+                "EvaluationPeriods": 2,
+                "Threshold": 5,
+                "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "LoadBalancer",
+                        "Value": {
+                            "Fn::GetAtt": [
+                                "AppLoadBalancer",
+                                "LoadBalancerFullName"
+                            ]
+                        }
+                    }
+                ]
+            }
+        },
+        "ALBHighLatencyAlarm": {
+            "Type": "AWS::CloudWatch::Alarm",
+            "Properties": {
+                "AlarmName": "ALB-High-Latency-Alarm",
+                "MetricName": "TargetResponseTime",
+                "Namespace": "AWS/ApplicationELB",
+                "Statistic": "Average",
+                "Period": 60,
+                "EvaluationPeriods": 2,
+                "Threshold": 5,
+                "ComparisonOperator": "GreaterThanOrEqualToThreshold",
+                "Dimensions": [
+                    {
+                        "Name": "LoadBalancer",
+                        "Value": {
+                            "Fn::GetAtt": [
+                                "AppLoadBalancer",
+                                "LoadBalancerFullName"
+                            ]
+                        }
+                    }
+                ]
+            }
+        }
+    },
+    "Outputs": {
+        "VPCID": {
+            "Value": {
+                "Ref": "LabVPC"
+            }
+        },
+        "PublicSubnet1ID": {
+            "Value": {
+                "Ref": "PublicSubnet1"
+            }
+        },
+        "PublicSubnet2ID": {
+            "Value": {
+                "Ref": "PublicSubnet2"
+            }
+        },
+        "PrivateSubnet1ID": {
+            "Value": {
+                "Ref": "PrivateSubnet1"
+            }
+        },
+        "PrivateSubnet2ID": {
+            "Value": {
+                "Ref": "PrivateSubnet2"
+            }
+        },
+        "LoadBalancerDNSName": {
+            "Description": "DNS name of the Application Load Balancer",
+            "Value": {
+                "Fn::GetAtt": [
+                    "AppLoadBalancer",
+                    "DNSName"
+                ]
+            }
+        },
+        "ECSClusterName": {
+            "Value": {
+                "Ref": "ECSCluster"
+            }
+        },
+        "TaskDefinitionArn": {
+            "Value": {
+                "Ref": "ECSTaskDefinition"
+            }
+        },
+        "ServiceName": {
+            "Value": {
+                "Ref": "ECSService"
+            }
+        },
+        "S3BucketName": {
+            "Value": {
+                "Ref": "AppS3Bucket"
+            }
+        },
+        "S3BucketURL": {
+            "Value": {
+                "Fn::Sub": "https://${AppS3Bucket}.s3.amazonaws.com"
             }
         }
     }
