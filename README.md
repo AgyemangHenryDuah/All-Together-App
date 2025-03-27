@@ -13,7 +13,7 @@ The All-Together-App is an image gallery platform that allows users to upload, v
 
 1. Clone the repository:
     ```bash
-    git clone https://github.com/your-username/All-Together-App.git
+    git clone https://github.com/AgyemangHenryDuah/All-Together-App.git
     ```
 2. Navigate to the project directory:
     ```bash
